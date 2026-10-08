@@ -322,6 +322,9 @@ public:
     //! Get archive directory path
     const char *getArchiveDir(void) const;
 
+    //! Get zygote server socket path (--deqp-zygote-server), empty if not a zygote server
+    const char *getZygoteServerPath(void) const;
+
     //! Get runner type (--deqp-runner-type)
     tcu::TestRunnerType getRunnerType(void) const;
 

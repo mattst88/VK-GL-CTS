@@ -74,7 +74,7 @@ TestNode::TestNode(TestContext &testCtx, TestNodeType nodeType, const char *name
 
 TestNode::~TestNode(void)
 {
-    TestNode::deinit();
+    deleteChildren();
 }
 
 void TestNode::getChildren(vector<TestNode *> &res) const
@@ -154,6 +154,14 @@ void TestNode::init(void)
 }
 
 void TestNode::deinit(void)
+{
+    // Children of a pre-inflated node can not be re-created by the inflater,
+    // and are shared copy-on-write between forked processes, so keep them.
+    if (!m_preInflated)
+        deleteChildren();
+}
+
+void TestNode::deleteChildren(void)
 {
     for (int i = 0; i < (int)m_children.size(); i++)
         delete m_children[i];

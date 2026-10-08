@@ -137,6 +137,15 @@ public:
 
     virtual IterateResult iterate(void);
 
+    // Whether the hierarchy of this package can be created in a zygote
+    // server (see tcuZygote.hpp). init() of the package and of its groups
+    // must then leave nothing behind that a forked process can't share,
+    // such as a rendering context, a connection to a display or threads.
+    virtual bool supportsZygote(void) const
+    {
+        return false;
+    }
+
     void setCaseListFilter(const CaseListFilter *caseListFilter);
 
 protected:

@@ -184,6 +184,18 @@ public:
         return m_useFraction0;
     }
 
+    // A pre-inflated node has had init() called ahead of test execution (see
+    // App::inflateTestHierarchy()). The hierarchy inflater does not call
+    // init() again for such a node, and deinit() keeps its children.
+    void setPreInflated(void)
+    {
+        m_preInflated = true;
+    }
+    bool isPreInflated(void) const
+    {
+        return m_preInflated;
+    }
+
 protected:
     TestContext &m_testCtx;
     std::string m_name;
@@ -197,6 +209,9 @@ private:
     std::vector<TestNode *> m_children;
     bool m_duplicateCheck;
     bool m_useFraction0{false};
+    bool m_preInflated{false};
+
+    void deleteChildren(void);
 };
 
 /*--------------------------------------------------------------------*//*!

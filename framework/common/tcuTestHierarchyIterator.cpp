@@ -53,7 +53,8 @@ void DefaultHierarchyInflater::enterTestPackage(TestPackage *testPackage, vector
             m_testCtx.setCurrentArchive(m_testCtx.getRootArchive());
     }
 
-    testPackage->init();
+    if (!testPackage->isPreInflated())
+        testPackage->init();
     testPackage->getChildren(children);
 
     // write default session info if it was not done by package
@@ -68,7 +69,8 @@ void DefaultHierarchyInflater::leaveTestPackage(TestPackage *testPackage)
 
 void DefaultHierarchyInflater::enterGroupNode(TestCaseGroup *testGroup, vector<TestNode *> &children)
 {
-    testGroup->init();
+    if (!testGroup->isPreInflated())
+        testGroup->init();
     testGroup->getChildren(children);
 }
 

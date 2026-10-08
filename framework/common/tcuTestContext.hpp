@@ -91,6 +91,10 @@ public:
     {
         return m_watchDog;
     }
+    void setWatchDog(qpWatchDog *watchDog)
+    {
+        m_watchDog = watchDog;
+    }
 
     Archive &getRootArchive(void) const
     {

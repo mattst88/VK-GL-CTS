@@ -111,6 +111,8 @@ DE_DECLARE_COMMAND_LINE_OPT(LogDecompiledSpirv, bool);
 DE_DECLARE_COMMAND_LINE_OPT(LogEmptyLoginfo, bool);
 DE_DECLARE_COMMAND_LINE_OPT(TestOOM, bool);
 DE_DECLARE_COMMAND_LINE_OPT(ArchiveDir, std::string);
+DE_DECLARE_COMMAND_LINE_OPT(Zygote, std::string);
+DE_DECLARE_COMMAND_LINE_OPT(ZygoteServer, std::string);
 DE_DECLARE_COMMAND_LINE_OPT(VKDeviceID, int);
 DE_DECLARE_COMMAND_LINE_OPT(MaxCustomDevices, int);
 DE_DECLARE_COMMAND_LINE_OPT(VKDeviceGroupID, int);
@@ -294,6 +296,10 @@ void registerOptions(de::cmdline::Parser &parser)
         << Option<TestOOM>(nullptr, "deqp-test-oom", "Run tests that exhaust memory on purpose", s_enableNames,
                            TEST_OOM_DEFAULT)
         << Option<ArchiveDir>(nullptr, "deqp-archive-dir", "Path to test resource files", ".")
+        << Option<Zygote>(nullptr, "deqp-zygote",
+                          "Run the tests in a process forked from the zygote server listening on given socket", "")
+        << Option<ZygoteServer>(nullptr, "deqp-zygote-server",
+                                "Build the test hierarchy once and serve --deqp-zygote requests on given socket", "")
         << Option<LogFlush>(nullptr, "deqp-log-flush", "Enable or disable log file fflush", s_enableNames, "enable")
         << Option<LogCompact>(nullptr, "deqp-log-compact", "Enable or disable the compact version of the log",
                               s_enableNames, "disable")
@@ -1408,6 +1414,10 @@ const char *CommandLine::getCaseFractionMandatoryTests(void) const
 const char *CommandLine::getArchiveDir(void) const
 {
     return m_cmdLine.getOption<opt::ArchiveDir>().c_str();
+}
+const char *CommandLine::getZygoteServerPath(void) const
+{
+    return m_cmdLine.getOption<opt::ZygoteServer>().c_str();
 }
 tcu::TestRunnerType CommandLine::getRunnerType(void) const
 {

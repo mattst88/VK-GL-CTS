@@ -141,15 +141,122 @@ App::App(Platform &platform, Archive &archive, TestLog &log, const CommandLine &
     , m_testCtx(nullptr)
     , m_testRoot(nullptr)
     , m_testExecutor(nullptr)
+    , m_inflateFilter(nullptr)
 {
+    createTestHierarchy(archive, log, cmdLine);
+    startSession();
+}
+
+App::App(Platform &platform, Archive &archive, TestLog &log, const CommandLine &cmdLine, DeferSessionTag)
+    : m_platform(platform)
+    , m_watchDog(nullptr)
+    , m_crashHandler(nullptr)
+    , m_crashed(false)
+    , m_testCtx(nullptr)
+    , m_testRoot(nullptr)
+    , m_testExecutor(nullptr)
+    , m_inflateFilter(nullptr)
+{
+    createTestHierarchy(archive, log, cmdLine);
+}
+
+void App::createTestHierarchy(Archive &archive, TestLog &log, const CommandLine &cmdLine)
+{
+    if (!deSetRoundingMode(DE_ROUNDINGMODE_TO_NEAREST_EVEN))
+        qpPrintf("WARNING: Failed to set floating-point rounding mode!\n");
+
+    try
+    {
+        // Create test context
+        m_testCtx = new TestContext(m_platform, archive, log, cmdLine, nullptr);
+
+        // Create root from registry
+        m_testRoot = new TestPackageRoot(*m_testCtx, TestPackageRegistry::getSingleton());
+    }
+    catch (const std::exception &e)
+    {
+        cleanup();
+        die("Failed to initialize dEQP: %s", e.what());
+    }
+}
+
+static void inflateGroups(TestNode *parent, const std::string &parentPath, const CaseListFilter &filter)
+{
+    std::vector<TestNode *> children;
+    parent->getChildren(children);
+
+    for (TestNode *child : children)
+    {
+        if (child->getNodeType() != NODETYPE_GROUP)
+            continue;
+
+        const std::string path = parentPath + "." + child->getName();
+
+        if (!filter.checkTestGroupName(path.c_str()))
+            continue;
+
+        child->init();
+        child->setPreInflated();
+        inflateGroups(child, path, filter);
+    }
+}
+
+void App::inflateTestHierarchy(void)
+{
+    DE_ASSERT(!m_testExecutor && !m_inflateFilter);
+
+    try
+    {
+        m_inflateFilter = m_testCtx->getCommandLine().createCaseListFilter(m_testCtx->getArchive()).release();
+
+        std::vector<TestNode *> packages;
+        m_testRoot->getChildren(packages);
+
+        for (TestNode *node : packages)
+        {
+            const TestPackage *const package = static_cast<TestPackage *>(node);
+
+            if (m_inflateFilter->checkTestGroupName(package->getName()) && !package->supportsZygote())
+                throw NotSupportedError(std::string("Test package ") + package->getName() +
+                                        " can't be created in a zygote server");
+        }
+
+        for (TestNode *node : packages)
+        {
+            TestPackage *const package = static_cast<TestPackage *>(node);
+            Archive *const pkgArchive  = package->getArchive();
+
+            if (!m_inflateFilter->checkTestGroupName(package->getName()))
+                continue;
+
+            m_testCtx->setCurrentArchive(pkgArchive ? *pkgArchive : m_testCtx->getRootArchive());
+
+            // All root groups are created so that a later session can use
+            // any case list; only the ones selected here are inflated.
+            package->setCaseListFilter(nullptr);
+            package->init();
+            package->setPreInflated();
+            inflateGroups(package, package->getName(), *m_inflateFilter);
+
+            m_testCtx->setCurrentArchive(m_testCtx->getRootArchive());
+        }
+    }
+    catch (const std::exception &e)
+    {
+        cleanup();
+        die("Failed to initialize dEQP: %s", e.what());
+    }
+}
+
+void App::startSession(void)
+{
+    const CommandLine &cmdLine = m_testCtx->getCommandLine();
+
     if (!cmdLine.isSubProcess())
     {
         print("dEQP Core %s (0x%08x) starting..\n", qpGetReleaseName(), qpGetReleaseId());
         print("  target implementation = '%s'\n", qpGetTargetName());
     }
-
-    if (!deSetRoundingMode(DE_ROUNDINGMODE_TO_NEAREST_EVEN))
-        qpPrintf("WARNING: Failed to set floating-point rounding mode!\n");
 
     try
     {
@@ -157,18 +264,15 @@ App::App(Platform &platform, Archive &archive, TestLog &log, const CommandLine &
 
         // Initialize watchdog
         if (cmdLine.isWatchDogEnabled())
+        {
             TCU_CHECK_INTERNAL(m_watchDog = qpWatchDog_create(onWatchdogTimeout, this, cmdLine.getWatchDogTotalTime(),
                                                               cmdLine.getWatchDogIntervalTime()));
+            m_testCtx->setWatchDog(m_watchDog);
+        }
 
         // Initialize crash handler.
         if (cmdLine.isCrashHandlingEnabled())
             TCU_CHECK_INTERNAL(m_crashHandler = qpCrashHandler_create(onCrash, this));
-
-        // Create test context
-        m_testCtx = new TestContext(m_platform, archive, log, cmdLine, m_watchDog);
-
-        // Create root from registry
-        m_testRoot = new TestPackageRoot(*m_testCtx, TestPackageRegistry::getSingleton());
 
         // \note No executor is created if runmode is not EXECUTE
         if (runMode == RUNMODE_EXECUTE)
@@ -197,6 +301,23 @@ App::App(Platform &platform, Archive &archive, TestLog &log, const CommandLine &
     }
 }
 
+void App::endSession(void)
+{
+    delete m_testExecutor;
+    m_testExecutor = nullptr;
+
+    if (m_crashHandler)
+        qpCrashHandler_destroy(m_crashHandler);
+    m_crashHandler = nullptr;
+
+    if (m_watchDog)
+    {
+        m_testCtx->setWatchDog(nullptr);
+        qpWatchDog_destroy(m_watchDog);
+    }
+    m_watchDog = nullptr;
+}
+
 App::~App(void)
 {
     cleanup();
@@ -206,6 +327,7 @@ void App::cleanup(void)
 {
     delete m_testExecutor;
     delete m_testRoot;
+    delete m_inflateFilter;
     delete m_testCtx;
 
     if (m_crashHandler)

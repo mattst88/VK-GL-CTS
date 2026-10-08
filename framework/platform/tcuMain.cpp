@@ -28,10 +28,19 @@
 #include "tcuResource.hpp"
 #include "tcuTestLog.hpp"
 #include "tcuTestSessionExecutor.hpp"
+#include "tcuZygote.hpp"
 #include "deUniquePtr.hpp"
 #include "qpDebugOut.h"
 
 #include <cstdio>
+#include <cstdlib>
+#include <new>
+#include <string>
+#include <vector>
+
+#if (DE_OS == DE_OS_UNIX)
+#include <unistd.h>
+#endif
 
 // Implement this in your platform port.
 tcu::Platform *createPlatform(void);
@@ -52,6 +61,76 @@ void disableStdout()
     qpRedirectOut(disableRawWrites, disableFmtWrites);
 }
 
+// Steps the application until the test session is complete.
+int runSession(tcu::App &app, const tcu::CommandLine &cmdLine)
+{
+    for (;;)
+    {
+        if (!app.iterate())
+        {
+            if (cmdLine.getRunMode() == tcu::RUNMODE_EXECUTE &&
+                (!app.getResult().isComplete || app.getResult().numFailed))
+            {
+                return EXIT_FAILURE;
+            }
+
+            return EXIT_SUCCESS;
+        }
+    }
+}
+
+// Creates the test hierarchy and runs a test session in a forked process
+// for every client. See tcuZygote.hpp.
+[[noreturn]] void runZygoteServer(int argc, char **argv, tcu::CommandLine &cmdLine)
+{
+    tcu::DirArchive archive(cmdLine.getArchiveDir());
+    tcu::TestLog log("/dev/null", cmdLine.getLogFlags());
+    de::UniquePtr<tcu::Platform> platform(createPlatform());
+    tcu::App *const app = new tcu::App(*platform, archive, log, cmdLine, tcu::App::DEFER_SESSION);
+
+    app->inflateTestHierarchy();
+
+    // Only returns in a forked process, which takes over the client's command line.
+    const std::vector<std::string> args = tcu::zygote::serve(cmdLine.getZygoteServerPath(), argc, argv);
+    std::vector<const char *> sessionArgv;
+
+    for (const std::string &arg : args)
+        sessionArgv.push_back(arg.c_str());
+
+    // The test hierarchy refers to the command line and the log, so these
+    // are replaced in place.
+    {
+        // Reports errors (or prints help) like the constructor in main() does.
+        tcu::CommandLine sessionCmdLine((int)sessionArgv.size(), sessionArgv.data());
+    }
+    cmdLine.~CommandLine();
+    new (&cmdLine) tcu::CommandLine((int)sessionArgv.size(), sessionArgv.data());
+
+    if (cmdLine.quietMode())
+        disableStdout();
+
+    log.~TestLog();
+    try
+    {
+        new (&log) tcu::TestLog(cmdLine.getLogFileName(), cmdLine.getLogFlags());
+    }
+    catch (const std::exception &e)
+    {
+        // There is no log object to unwind with.
+        tcu::die("%s", e.what());
+    }
+
+    app->startSession();
+
+    const int exitStatus = runSession(*app, cmdLine);
+
+    // Tearing down the hierarchy would only unshare its memory.
+    app->endSession();
+    log.~TestLog();
+    fflush(nullptr);
+    _exit(exitStatus);
+}
+
 } // anonymous namespace
 
 int main(int argc, char **argv)
@@ -63,6 +142,12 @@ int main(int argc, char **argv)
     setvbuf(stdout, nullptr, _IOLBF, 4 * 1024);
 #endif
 
+    if (const char *const zygotePath = tcu::zygote::getClientSocketPath(argc, argv))
+    {
+        if (tcu::zygote::runInZygote(zygotePath, argc, argv, exitStatus))
+            return exitStatus;
+    }
+
     try
     {
         tcu::CommandLine cmdLine(argc, argv);
@@ -70,25 +155,15 @@ int main(int argc, char **argv)
         if (cmdLine.quietMode())
             disableStdout();
 
+        if (cmdLine.getZygoteServerPath()[0] != 0)
+            runZygoteServer(argc, argv, cmdLine);
+
         tcu::DirArchive archive(cmdLine.getArchiveDir());
         tcu::TestLog log(cmdLine.getLogFileName(), cmdLine.getLogFlags());
         de::UniquePtr<tcu::Platform> platform(createPlatform());
         de::UniquePtr<tcu::App> app(new tcu::App(*platform, archive, log, cmdLine));
 
-        // Main loop.
-        for (;;)
-        {
-            if (!app->iterate())
-            {
-                if (cmdLine.getRunMode() == tcu::RUNMODE_EXECUTE &&
-                    (!app->getResult().isComplete || app->getResult().numFailed))
-                {
-                    exitStatus = EXIT_FAILURE;
-                }
-
-                break;
-            }
-        }
+        exitStatus = runSession(*app, cmdLine);
     }
     catch (const std::exception &e)
     {

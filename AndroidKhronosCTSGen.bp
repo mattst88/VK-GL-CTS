@@ -182,6 +182,7 @@ cc_library_static {
         "framework/common/tcuTextureUtil.cpp",
         "framework/common/tcuThreadUtil.cpp",
         "framework/common/tcuWaiverUtil.cpp",
+        "framework/common/tcuZygote.cpp",
         "framework/delibs/debase/deDefs.c",
         "framework/delibs/debase/deFloat16.c",
         "framework/delibs/debase/deFloat16Test.c",

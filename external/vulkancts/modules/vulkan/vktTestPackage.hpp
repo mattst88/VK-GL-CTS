@@ -38,6 +38,13 @@ public:
     virtual ~BaseTestPackage(void);
 
     tcu::TestCaseExecutor *createExecutor(void) const;
+
+    // Creating the hierarchy does not load the Vulkan library; that is left
+    // to the executor.
+    bool supportsZygote(void) const
+    {
+        return true;
+    }
 };
 
 #ifdef CTS_USES_VULKAN

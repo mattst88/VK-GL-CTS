@@ -38,6 +38,7 @@ class Archive;
 class Platform;
 class TestContext;
 class TestSessionExecutor;
+class CaseListFilter;
 class CommandLine;
 class TestLog;
 class TestPackageRoot;
@@ -62,13 +63,30 @@ class TestRunStatus;
 class App
 {
 public:
+    enum DeferSessionTag
+    {
+        DEFER_SESSION
+    };
+
     App(Platform &platform, Archive &archive, TestLog &log, const CommandLine &cmdLine);
+    // Only creates the test hierarchy root. startSession() must be called
+    // before iterate(). The objects passed in may be replaced in place
+    // (keeping their addresses) before startSession() is called.
+    App(Platform &platform, Archive &archive, TestLog &log, const CommandLine &cmdLine, DeferSessionTag);
     virtual ~App(void);
+
+    // Calls init() on all packages and groups selected by the command line
+    // instead of leaving that to test execution.
+    void inflateTestHierarchy(void);
+    void startSession(void);
+    // Ends test execution without tearing down the test hierarchy.
+    void endSession(void);
 
     bool iterate(void);
     const TestRunStatus &getResult(void) const;
 
 protected:
+    void createTestHierarchy(Archive &archive, TestLog &log, const CommandLine &cmdLine);
     void cleanup(void);
 
     void onWatchdogTimeout(qpTimeoutReason reason);
@@ -86,6 +104,7 @@ protected:
     TestContext *m_testCtx;
     TestPackageRoot *m_testRoot;
     TestSessionExecutor *m_testExecutor;
+    const CaseListFilter *m_inflateFilter;
 };
 
 } // namespace tcu

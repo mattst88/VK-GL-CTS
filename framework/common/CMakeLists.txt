@@ -105,6 +105,8 @@ set(TCUTIL_SRCS
 	tcuRasterizationVerifier.hpp
 	tcuWaiverUtil.cpp
 	tcuWaiverUtil.hpp
+	tcuZygote.cpp
+	tcuZygote.hpp
 	tcuSubprocessTestExecutor.cpp
 	${tcuSubprocessTestExecutorOS}
 	tcuSubprocessTestExecutor.hpp
