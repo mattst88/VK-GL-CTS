@@ -32,9 +32,11 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <utility>
 
 #include <fcntl.h>
 #include <poll.h>
+#include <sys/mman.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
@@ -44,6 +46,11 @@
 #include <unistd.h>
 
 extern char **environ;
+
+// \note Linux 6.1. Fails with EINVAL on older kernels.
+#if !defined(MADV_COLLAPSE)
+#define MADV_COLLAPSE 25
+#endif
 
 namespace tcu
 {
@@ -223,6 +230,63 @@ int getNumThreads(void)
 
     fclose(file);
     return numThreads;
+}
+
+// Backs the heap, which by now is mostly the test hierarchy, with transparent
+// huge pages, which leaves fork() far fewer page table entries to copy for
+// every session. Best effort: without support from the kernel nothing changes.
+void collapseHeap(void)
+{
+    std::vector<std::pair<unsigned long, unsigned long>> ranges;
+    unsigned long hugePageSize = 0;
+    char line[4096 + 256];
+
+    {
+        FILE *const file = fopen("/sys/kernel/mm/transparent_hugepage/hpage_pmd_size", "r");
+
+        if (!file)
+            return;
+
+        if (fscanf(file, "%lu", &hugePageSize) != 1)
+            hugePageSize = 0;
+        fclose(file);
+    }
+
+    if (hugePageSize == 0 || (hugePageSize & (hugePageSize - 1)) != 0)
+        return;
+
+    FILE *const file = fopen("/proc/self/maps", "r");
+    if (!file)
+        return;
+
+    // \note Collapsing changes the mappings, so they are all read first.
+    while (fgets(line, sizeof(line), file))
+    {
+        unsigned long start, end, inode;
+        char perms[5];
+        char name[32];
+
+        const int numFields = sscanf(line, "%lx-%lx %4s %*x %*s %lu %31s", &start, &end, perms, &inode, name);
+
+        // Private anonymous memory: the heap and what malloc() got from mmap().
+        if (numFields < 4 || strcmp(perms, "rw-p") != 0 || inode != 0)
+            continue;
+        if (numFields == 5 && strcmp(name, "[heap]") != 0)
+            continue;
+
+        start = (start + hugePageSize - 1) & ~(hugePageSize - 1);
+        end &= ~(hugePageSize - 1);
+
+        if (start < end)
+            ranges.push_back(std::make_pair(start, end));
+    }
+
+    fclose(file);
+
+    // \note Fails if any of the huge pages in the range could not be
+    //       collapsed, but has dealt with the others.
+    for (const std::pair<unsigned long, unsigned long> &range : ranges)
+        madvise((void *)range.first, range.second - range.first, MADV_COLLAPSE);
 }
 
 // Server
@@ -515,6 +579,8 @@ std::vector<std::string> serve(const char *socketPath, int argc, const char *con
     // the server to its own, however it exits.
     struct stat stdinStat;
     const bool watchStdin = fstat(STDIN_FILENO, &stdinStat) == 0 && S_ISFIFO(stdinStat.st_mode);
+
+    collapseHeap();
 
     printf("dEQP zygote: listening on %s\n", socketPath);
     fflush(nullptr);
